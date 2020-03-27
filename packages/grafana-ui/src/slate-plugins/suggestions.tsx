@@ -217,25 +217,29 @@ const handleTypeahead = async (
 
   // Get decorations associated with the current line
   const parentBlock = value.document.getClosestBlock(value.focusBlock.key);
-  const myOffset = value.selection.start.offset - 1;
+  const selectionStartOffset = value.selection.start.offset - 1;
   const decorations = parentBlock && parentBlock.getDecorations(editor as any);
+  //console.log(`Start of current selection: ${value.selection.start.offset}`);
 
   const filteredDecorations = decorations
     ? decorations
         .filter(
           decoration =>
-            decoration!.start.offset <= myOffset && decoration!.end.offset > myOffset && decoration!.type === TOKEN_MARK
+            decoration!.start.offset <= selectionStartOffset &&
+            decoration!.end.offset > selectionStartOffset &&
+            decoration!.type === TOKEN_MARK
         )
         .toArray()
     : [];
 
+  //console.log(filteredDecorations);
   // Find the first label key to the left of the cursor
   const labelKeyDec =
     decorations &&
     decorations
       .filter(
         decoration =>
-          decoration!.end.offset <= myOffset &&
+          decoration!.end.offset <= selectionStartOffset &&
           decoration!.type === TOKEN_MARK &&
           decoration!.data.get('className').includes('label-key')
       )
@@ -251,12 +255,14 @@ const handleTypeahead = async (
 
   let text = value.focusText.text;
   let prefix = text.slice(0, selection.focus.offset);
+  //console.log(`Prefix before cleaning. '${prefix}'`);
 
   if (filteredDecorations.length) {
     text = value.focusText.text.slice(filteredDecorations[0].start.offset, filteredDecorations[0].end.offset);
     prefix = value.focusText.text.slice(filteredDecorations[0].start.offset, selection.focus.offset);
   }
 
+  //console.log(`Prefix before cleaning 2. '${prefix}'`);
   // Label values could have valid characters erased if `cleanText()` is
   // blindly applied, which would undesirably interfere with suggestions
   const labelValueMatch = prefix.match(/(?:!?=~?"?|")(.*)/);
@@ -266,12 +272,14 @@ const handleTypeahead = async (
     prefix = cleanText(prefix);
   }
 
+  //console.log(`Prefix after cleaning. '${prefix}'`);
   const { suggestions, context } = await onTypeahead({
     prefix,
     text,
     value,
     wrapperClasses,
     labelKey: labelKey || undefined,
+    editor,
   });
 
   const filteredSuggestions = suggestions
@@ -280,28 +288,33 @@ const handleTypeahead = async (
         return group;
       }
 
+      let newGroup = { ...group };
       if (prefix) {
+        //console.log('We have prefix');
         // Filter groups based on prefix
         if (!group.skipFilter) {
-          group.items = group.items.filter(c => (c.filterText || c.label).length >= prefix.length);
+          newGroup.items = newGroup.items.filter(c => (c.filterText || c.label).length >= prefix.length);
           if (group.prefixMatch) {
-            group.items = group.items.filter(c => (c.filterText || c.label).startsWith(prefix));
+            newGroup.items = newGroup.items.filter(c => (c.filterText || c.label).startsWith(prefix));
           } else {
-            group.items = group.items.filter(c => (c.filterText || c.label).includes(prefix));
+            newGroup.items = newGroup.items.filter(c => (c.filterText || c.label).includes(prefix));
           }
         }
 
         // Filter out the already typed value (prefix) unless it inserts custom text
-        group.items = group.items.filter(c => c.insertText || (c.filterText || c.label) !== prefix);
+        newGroup.items = newGroup.items.filter(c => c.insertText || (c.filterText || c.label) !== prefix);
+        // if (newGroup.items.length === 1 && newGroup.items[0].insertText === prefix) {
+        //   newGroup.items = [];
+        // }
       }
 
       if (!group.skipSort) {
-        group.items = sortBy(group.items, (item: CompletionItem) => item.sortText || item.label);
+        newGroup.items = sortBy(newGroup.items, (item: CompletionItem) => item.sortText || item.label);
       }
 
-      return group;
+      return newGroup;
     })
-    .filter(group => group.items && group.items.length); // Filter out empty groups
+    .filter(gr => gr.items && gr.items.length); // Filter out empty groups
 
   onStateChange({
     groupedItems: filteredSuggestions,

@@ -5,6 +5,10 @@ import { reducerTester } from '../../../../test/core/redux/reducerTester';
 
 describe('Alert rules', () => {
   const realDateNow = Date.now.bind(global.Date);
+  const anchorUnix = dateTime('2019-09-04T10:01:01+02:00').valueOf();
+  const dateNowStub = jest.fn(() => anchorUnix);
+  global.Date.now = dateNowStub;
+
   const newStateDate = dateTime().subtract(1, 'y');
   const newStateDateFormatted = newStateDate.format('YYYY-MM-DD');
   const newStateDateAge = newStateDate.fromNow(true);
@@ -82,13 +86,6 @@ describe('Alert rules', () => {
       url: '/d/ggHbN42mk/alerting-with-testdata',
     },
   ];
-
-  beforeAll(() => {
-    const anchor = '2019-09-04T10:01:01+02:00';
-    const unix = dateTime(anchor).valueOf();
-    const dateNowStub = jest.fn(() => unix);
-    global.Date.now = dateNowStub;
-  });
 
   afterAll(() => {
     global.Date.now = realDateNow;

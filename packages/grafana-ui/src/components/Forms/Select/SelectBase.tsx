@@ -68,6 +68,7 @@ export function SelectBase<T>({
   allowCustomValue = false,
   autoFocus = false,
   backspaceRemovesValue = true,
+  className,
   components,
   defaultOptions,
   defaultValue,
@@ -177,8 +178,8 @@ export function SelectBase<T>({
   };
 
   // width property is deprecated in favor of size or className
-  let widthClass = '';
-  if (width) {
+  let widthClass = className ?? '';
+  if (width && !className) {
     deprecationWarning('Select', 'width property', 'size or className');
     widthClass = 'width-' + width;
   }

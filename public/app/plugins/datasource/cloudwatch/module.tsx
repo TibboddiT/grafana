@@ -7,10 +7,12 @@ import { CloudWatchAnnotationsQueryCtrl } from './annotations_query_ctrl';
 import { CloudWatchJsonData, CloudWatchQuery } from './types';
 import { CloudWatchLogsQueryEditor } from './components/LogsQueryEditor';
 import { PanelQueryEditor } from './components/PanelQueryEditor';
+import LogsCheatSheet from './components/LogsCheatSheet';
 
 export const plugin = new DataSourcePlugin<CloudWatchDatasource, CloudWatchQuery, CloudWatchJsonData>(
   CloudWatchDatasource
 )
+  .setExploreStartPage(LogsCheatSheet)
   .setConfigEditor(ConfigEditor)
   .setQueryEditor(PanelQueryEditor)
   .setExploreMetricsQueryField(MetricsQueryEditor)

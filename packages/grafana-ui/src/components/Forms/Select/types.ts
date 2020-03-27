@@ -42,6 +42,8 @@ export interface SelectCommonProps<T> {
   /** Use a custom element to control Select. A proper ref to the renderControl is needed if 'portal' isn't set to null*/
   renderControl?: ControlComponent<T>;
   menuPosition?: 'fixed' | 'absolute';
+  closeMenuOnSelect?: boolean;
+  isOptionDisabled?: () => boolean;
 }
 
 export interface SelectAsyncProps<T> {

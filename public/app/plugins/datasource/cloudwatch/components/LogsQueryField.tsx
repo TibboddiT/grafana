@@ -1,7 +1,7 @@
 // Libraries
 import React, { ReactNode } from 'react';
 
-import { QueryField, SlatePrism, Forms, TypeaheadInput, TypeaheadOutput } from '@grafana/ui';
+import { QueryField, SlatePrism, Forms, TypeaheadInput, TypeaheadOutput, BracesPlugin } from '@grafana/ui';
 
 // Utils & Services
 // dom also includes Element polyfills
@@ -12,14 +12,22 @@ import syntax from '../syntax';
 import { ExploreQueryFieldProps, AbsoluteTimeRange, SelectableValue } from '@grafana/data';
 import { CloudWatchQuery, CloudWatchLogsQuery } from '../types';
 import { CloudWatchDatasource } from '../datasource';
-import Prism from 'prismjs';
+import Prism, { Grammar } from 'prismjs';
 import { CloudWatchLanguageProvider } from '../language_provider';
+import { css } from 'emotion';
 
 export interface CloudWatchLogsQueryFieldProps extends ExploreQueryFieldProps<CloudWatchDatasource, CloudWatchQuery> {
   absoluteRange: AbsoluteTimeRange;
   onLabelsRefresh?: () => void;
   ExtraFieldElement?: ReactNode;
+  syntaxLoaded: boolean;
+  syntax: Grammar;
 }
+
+const containerClass = css`
+  flex-grow: 1;
+  min-height: 35px;
+`;
 
 interface State {
   selectedLogGroups: Array<SelectableValue<string>>;
@@ -41,8 +49,9 @@ export class CloudWatchLogsQueryField extends React.PureComponent<CloudWatchLogs
 
     Prism.languages['cloudwatch'] = syntax;
     this.plugins = [
+      BracesPlugin(),
       SlatePrism({
-        //onlyIn: (node: Node) => node.object === 'block' && node.type === 'code_block',
+        onlyIn: (node: Node) => node.object === 'block' && node.type === 'code_block',
         getSyntax: (node: Node) => 'cloudwatch',
       }),
     ];
@@ -95,6 +104,7 @@ export class CloudWatchLogsQueryField extends React.PureComponent<CloudWatchLogs
 
   onTypeahead = async (typeahead: TypeaheadInput): Promise<TypeaheadOutput> => {
     const { datasource } = this.props;
+    const { selectedLogGroups } = this.state;
 
     if (!datasource.languageProvider) {
       return { suggestions: [] };
@@ -102,11 +112,11 @@ export class CloudWatchLogsQueryField extends React.PureComponent<CloudWatchLogs
 
     const cloudwatchLanguageProvider = datasource.languageProvider as CloudWatchLanguageProvider;
     const { history, absoluteRange } = this.props;
-    const { prefix, text, value, wrapperClasses, labelKey } = typeahead;
+    const { prefix, text, value, wrapperClasses, labelKey, editor } = typeahead;
 
     const result = await cloudwatchLanguageProvider.provideCompletionItems(
-      { text, value, prefix, wrapperClasses, labelKey },
-      { history, absoluteRange }
+      { text, value, prefix, wrapperClasses, labelKey, editor },
+      { history, absoluteRange, logGroupNames: selectedLogGroups.map(logGroup => logGroup.value) }
     );
 
     //console.log('handleTypeahead', wrapperClasses, text, prefix, nextChar, labelKey, result.context);
@@ -115,10 +125,11 @@ export class CloudWatchLogsQueryField extends React.PureComponent<CloudWatchLogs
   };
 
   render() {
-    const { ExtraFieldElement, data, query } = this.props;
+    const { ExtraFieldElement, data, query, syntaxLoaded, datasource } = this.props;
     const { selectedLogGroups } = this.state;
 
     const showError = data && data.error && data.error.refId === query.refId;
+    const cleanText = datasource.languageProvider ? datasource.languageProvider.cleanText : undefined;
 
     //let queryStats: any = {};
     // console.log(data.series);
@@ -135,21 +146,21 @@ export class CloudWatchLogsQueryField extends React.PureComponent<CloudWatchLogs
 
     return (
       <>
+        <div className="gf-form gf-form--grow flex-grow-1">
+          <Forms.AsyncMultiSelect
+            loadOptions={this.loadAsyncOptions}
+            value={selectedLogGroups}
+            onChange={v => {
+              this.setSelectedLogGroups(v);
+            }}
+            className={containerClass}
+            closeMenuOnSelect={false}
+            isClearable={true}
+            isOptionDisabled={() => selectedLogGroups.length >= MAX_LOG_GROUPS}
+            defaultOptions
+          />
+        </div>
         <div className="gf-form-inline gf-form-inline--nowrap flex-grow-1">
-          <div className="gf-form flex-shrink-0">
-            <Forms.AsyncMultiSelect
-              loadOptions={this.loadAsyncOptions}
-              value={selectedLogGroups}
-              onChange={v => {
-                this.setSelectedLogGroups(v);
-              }}
-              size="sm"
-              closeMenuOnSelect={false}
-              isClearable={true}
-              isOptionDisabled={() => selectedLogGroups.length >= MAX_LOG_GROUPS}
-              defaultOptions
-            />
-          </div>
           <div className="gf-form gf-form--grow flex-shrink-1">
             <QueryField
               additionalPlugins={this.plugins}
@@ -158,8 +169,10 @@ export class CloudWatchLogsQueryField extends React.PureComponent<CloudWatchLogs
               onBlur={this.props.onBlur}
               onRunQuery={this.props.onRunQuery}
               onTypeahead={this.onTypeahead}
+              cleanText={cleanText}
               placeholder="Enter a CloudWatch Logs Insights query"
               portalOrigin="cloudwatch"
+              syntaxLoaded={syntaxLoaded}
             />
           </div>
           {ExtraFieldElement}

@@ -51,7 +51,7 @@ func (c *QueryCondition) Eval(context *alerting.EvalContext) (*alerting.Conditio
 		return nil, err
 	}
 
-	emptySerieCount := 0
+	emptySeriesCount := 0
 	evalMatchCount := 0
 	var matches []*alerting.EvalMatch
 
@@ -60,7 +60,7 @@ func (c *QueryCondition) Eval(context *alerting.EvalContext) (*alerting.Conditio
 		evalMatch := c.Evaluator.Eval(reducedValue)
 
 		if !reducedValue.Valid {
-			emptySerieCount++
+			emptySeriesCount++
 		}
 
 		if context.IsTestRun {
@@ -99,7 +99,7 @@ func (c *QueryCondition) Eval(context *alerting.EvalContext) (*alerting.Conditio
 
 	return &alerting.ConditionResult{
 		Firing:      evalMatchCount > 0,
-		NoDataFound: emptySerieCount == len(seriesList),
+		NoDataFound: emptySeriesCount == len(seriesList),
 		Operator:    c.Operator,
 		EvalMatches: matches,
 	}, nil
@@ -214,6 +214,8 @@ func (c *QueryCondition) executeQuery(context *alerting.EvalContext, timeRange *
 }
 
 func (c *QueryCondition) getRequestForAlertRule(datasource *models.DataSource, timeRange *tsdb.TimeRange, debug bool) *tsdb.TsdbQuery {
+	c.Query.Model.Set("fromAlert", true)
+
 	req := &tsdb.TsdbQuery{
 		TimeRange: timeRange,
 		Queries: []*tsdb.Query{

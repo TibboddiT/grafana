@@ -38,7 +38,7 @@ const setup = () => {
 
   const props: Props = {
     query: {
-      type: 'Metrics',
+      mode: 'Metrics',
       refId: '',
       id: '',
       region: 'us-east-1',
@@ -110,20 +110,21 @@ describe('QueryEditor', () => {
         expect(statistics).toEqual(['Average']);
         expect(dimensions).toEqual({});
       });
-      it('should normalize query with default values', () => {
-        expect(normalizeQuery({ refId: '42' } as any)).toEqual({
-          namespace: '',
-          metricName: '',
-          expression: '',
-          dimensions: {},
-          region: 'default',
-          id: '',
-          alias: '',
-          statistics: ['Average'],
-          matchExact: true,
-          period: '',
-          refId: '42',
-        });
+    });
+
+    it('should normalize query with default values', () => {
+      expect(normalizeQuery({ refId: '42' } as any)).toEqual({
+        namespace: '',
+        metricName: '',
+        expression: '',
+        dimensions: {},
+        region: 'default',
+        id: '',
+        alias: '',
+        statistics: ['Average'],
+        matchExact: true,
+        period: '',
+        refId: '42',
       });
     });
   });

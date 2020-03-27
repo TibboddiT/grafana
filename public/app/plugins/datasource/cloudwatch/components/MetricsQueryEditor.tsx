@@ -138,7 +138,7 @@ export class MetricsQueryEditor extends PureComponent<Props, State> {
                 <Input
                   className="gf-form-input"
                   onBlur={onRunQuery}
-                  value={query.expression}
+                  value={query.expression || ''}
                   onChange={(event: ChangeEvent<HTMLInputElement>) =>
                     this.onChange({ ...metricsQuery, expression: event.target.value })
                   }

@@ -9,8 +9,6 @@ import { CloudWatchQuery, CloudWatchMetricsQuery } from '../types';
 import { DataSourceInstanceSettings } from '@grafana/data';
 import { backendSrv } from 'app/core/services/backend_srv'; // will use the version in __mocks__
 import { TimeSrv } from 'app/features/dashboard/services/TimeSrv';
-import { of, empty } from 'rxjs';
-import { expand, map } from 'rxjs/operators';
 
 jest.mock('@grafana/runtime', () => ({
   ...jest.requireActual('@grafana/runtime'),
@@ -49,8 +47,6 @@ describe('CloudWatchDatasource', () => {
   });
 
   describe('When performing CloudWatch metrics query', () => {
-    let requestParams: { queries: CloudWatchMetricsQuery[] };
-
     const query = {
       range: defaultTimeRange,
       rangeRaw: { from: 1483228800, to: 1483232400 },
@@ -97,24 +93,27 @@ describe('CloudWatchDatasource', () => {
     };
 
     beforeEach(() => {
-      datasourceRequestMock.mockImplementation(params => {
-        requestParams = params.data;
+      datasourceRequestMock.mockImplementation(() => {
         return Promise.resolve({ data: response });
       });
     });
 
-    it('should generate the correct query', done => {
-      ctx.ds.query(query).then(() => {
-        expect(requestParams.queries[0].namespace).toBe(query.targets[0].namespace);
-        expect(requestParams.queries[0].metricName).toBe(query.targets[0].metricName);
-        expect(requestParams.queries[0].dimensions['InstanceId']).toStrictEqual(['i-12345678']);
-        expect(requestParams.queries[0].statistics).toEqual(query.targets[0].statistics);
-        expect(requestParams.queries[0].period).toBe(query.targets[0].period);
-        done();
-      });
+    it('should generate the correct query', async () => {
+      await ctx.ds.query(query);
+      expect(datasourceRequestMock.mock.calls[0][0].data.queries).toMatchObject(
+        expect.arrayContaining([
+          expect.objectContaining({
+            namespace: query.targets[0].namespace,
+            metricName: query.targets[0].metricName,
+            dimensions: { InstanceId: ['i-12345678'] },
+            statistics: query.targets[0].statistics,
+            period: query.targets[0].period,
+          }),
+        ])
+      );
     });
 
-    it('should generate the correct query with interval variable', done => {
+    it('should generate the correct query with interval variable', async () => {
       templateSrv.init([
         new CustomVariable(
           {
@@ -147,10 +146,8 @@ describe('CloudWatchDatasource', () => {
         ],
       };
 
-      ctx.ds.query(query).then(() => {
-        expect(requestParams.queries[0].period).toBe('600');
-        done();
-      });
+      await ctx.ds.query(query);
+      expect(datasourceRequestMock.mock.calls[0][0].data.queries[0].period).toEqual('600');
     });
 
     it.each(['pNN.NN', 'p9', 'p99.', 'p99.999'])('should cancel query for invalid extended statistics (%s)', stat => {
@@ -185,8 +182,7 @@ describe('CloudWatchDatasource', () => {
 
     describe('a correct cloudwatch url should be built for each time series in the response', () => {
       beforeEach(() => {
-        datasourceRequestMock.mockImplementation(params => {
-          requestParams = params.data;
+        datasourceRequestMock.mockImplementation(() => {
           return Promise.resolve({ data: response });
         });
       });
@@ -813,28 +809,4 @@ describe('CloudWatchDatasource', () => {
       });
     }
   );
-
-  describe('CloudWatch Logs Insights', () => {
-    it('should repeat query until status is complete', async () => {
-      const myQuery = [
-        { value: 1, status: 'Running' },
-        { value: 2, status: 'Running' },
-        { value: 3, status: 'Running' },
-        { value: 4, status: 'Complete' },
-      ];
-      const POLLING_TIMES = [100, 100, 100, 100, 100, 100, 100, 100];
-      const zorp = of(myQuery[0])
-        .pipe(
-          expand((response, i) => {
-            return response.status === 'Complete' || i >= POLLING_TIMES.length ? empty() : of(myQuery[i + 1]);
-          }),
-          map(val => val.value)
-        )
-        .toPromise();
-
-      const florp = await zorp;
-      console.log(florp);
-      expect(2).toBe(2);
-    });
-  });
 });

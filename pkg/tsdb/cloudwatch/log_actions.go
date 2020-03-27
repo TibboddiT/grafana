@@ -1,32 +1,28 @@
 package cloudwatch
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
-	"github.com/grafana/grafana-plugin-sdk-go/dataframe"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/tsdb"
 )
 
-func (e *CloudWatchExecutor) executeLogActions(ctx context.Context, queryContext *tsdb.TsdbQuery) (*tsdb.Response, error) {
+func (e *CloudWatchExecutor) executeLogActions(queryContext *tsdb.TsdbQuery) (*tsdb.Response, error) {
 	response := &tsdb.Response{
 		Results: make(map[string]*tsdb.QueryResult),
 	}
 
-	// logger := log.New("CloudWatch")
-	// logger.Info("Executing log actions...")
-
 	for _, query := range queryContext.Queries {
-		data, err := e.executeLogAction(ctx, queryContext, query)
-		if data == nil {
+		dataframe, err := e.executeLogAction(queryContext, query)
+		if dataframe == nil {
 			return nil, err
 		}
 
-		dataframeEnc, err := dataframe.MarshalArrow(data)
+		dataframeEnc, err := data.MarshalArrow(dataframe)
 
 		response.Results[query.RefId] = &tsdb.QueryResult{RefId: query.RefId, Dataframes: [][]byte{dataframeEnc}}
 	}
@@ -34,60 +30,51 @@ func (e *CloudWatchExecutor) executeLogActions(ctx context.Context, queryContext
 	return response, nil
 }
 
-func (e *CloudWatchExecutor) executeLogAction(ctx context.Context, queryContext *tsdb.TsdbQuery, query *tsdb.Query) (*dataframe.Frame, error) {
+func (e *CloudWatchExecutor) executeLogAction(queryContext *tsdb.TsdbQuery, query *tsdb.Query) (*data.Frame, error) {
 	parameters := query.Model
 	subType := query.Model.Get("subtype").MustString()
 
-	// logger := log.New("CloudWatch")
-	// logger.Info("Executing Log Action: " + subType)
+	var data *data.Frame = nil
+	var err error = nil
 
-	var data *dataframe.Frame
-	var err error
 	switch subType {
 	case "DescribeLogGroups":
-		data, err = e.handleDescribeLogGroups(ctx, parameters)
+		data, err = e.handleDescribeLogGroups(parameters)
 	case "GetLogGroupFields":
-		data, err = e.handleGetLogGroupFields(ctx, parameters, query)
+		data, err = e.handleGetLogGroupFields(parameters, query.RefId)
 	case "StartQuery":
-		data, err = e.handleStartQuery(ctx, parameters, queryContext, query)
+		data, err = e.handleStartQuery(parameters, queryContext.TimeRange, query.RefId)
 	case "StopQuery":
-		data, err = e.handleStopQuery(ctx, parameters, queryContext, query)
+		data, err = e.handleStopQuery(parameters)
 	case "GetQueryResults":
-		data, err = e.handleGetQueryResults(ctx, parameters, query)
+		data, err = e.handleGetQueryResults(parameters, query.RefId)
 	}
 
 	if data == nil {
 		return nil, err
 	}
 
-	// log.Info("Log action response: ")
-	// dataJSON, _ := json.Marshal(data)
-	// log.Info(string(dataJSON))
 	return data, nil
 }
 
-func (e *CloudWatchExecutor) handleDescribeLogGroups(ctx context.Context, parameters *simplejson.Json) (*dataframe.Frame, error) {
-	client, err := e.getLogsClient(parameters.Get("region").MustString())
-	if err != nil {
-		return nil, err
-	}
-
+func (e *CloudWatchExecutor) handleDescribeLogGroups(parameters *simplejson.Json) (*data.Frame, error) {
 	logGroupNamePrefix := parameters.Get("logGroupNamePrefix").MustString("")
 	var response *cloudwatchlogs.DescribeLogGroupsOutput = nil
+	var err error = nil
 
 	if len(logGroupNamePrefix) < 1 {
-		response, err = client.DescribeLogGroups(&cloudwatchlogs.DescribeLogGroupsInput{
+		response, err = e.logsClient.DescribeLogGroups(&cloudwatchlogs.DescribeLogGroupsInput{
 			Limit: aws.Int64(parameters.Get("limit").MustInt64(50)),
 		})
 	} else {
-		response, err = client.DescribeLogGroups(&cloudwatchlogs.DescribeLogGroupsInput{
+		response, err = e.logsClient.DescribeLogGroups(&cloudwatchlogs.DescribeLogGroupsInput{
 			Limit:              aws.Int64(parameters.Get("limit").MustInt64(50)),
 			LogGroupNamePrefix: aws.String(logGroupNamePrefix),
 		})
 	}
 
 	if err != nil || response == nil {
-		return nil, err
+		return nil, err.(awserr.Error)
 	}
 
 	logGroupNames := make([]*string, 0)
@@ -95,19 +82,19 @@ func (e *CloudWatchExecutor) handleDescribeLogGroups(ctx context.Context, parame
 		logGroupNames = append(logGroupNames, logGroup.LogGroupName)
 	}
 
-	groupNamesField := dataframe.NewField("logGroupName", nil, logGroupNames)
-	frame := dataframe.New("logGroups", groupNamesField)
+	groupNamesField := data.NewField("logGroupName", nil, logGroupNames)
+	frame := data.NewFrame("logGroups", groupNamesField)
 
 	return frame, nil
 }
 
-func (e *CloudWatchExecutor) handleStartQuery(ctx context.Context, parameters *simplejson.Json, queryContext *tsdb.TsdbQuery, query *tsdb.Query) (*dataframe.Frame, error) {
-	startTime, err := queryContext.TimeRange.ParseFrom()
+func (e *CloudWatchExecutor) executeStartQuery(parameters *simplejson.Json, timeRange *tsdb.TimeRange) (*cloudwatchlogs.StartQueryOutput, error) {
+	startTime, err := timeRange.ParseFrom()
 	if err != nil {
 		return nil, err
 	}
 
-	endTime, err := queryContext.TimeRange.ParseTo()
+	endTime, err := timeRange.ParseTo()
 	if err != nil {
 		return nil, err
 	}
@@ -117,9 +104,7 @@ func (e *CloudWatchExecutor) handleStartQuery(ctx context.Context, parameters *s
 	}
 
 	requestQueries := make(map[string][]*logsQuery)
-	region, _ := query.Model.Get("region").String()
-	// logger := log.New("CloudWatch")
-	// log.Info("Region: " + region)
+	region := parameters.Get("region").MustString("")
 
 	if _, exist := requestQueries[region]; !exist {
 		requestQueries[region] = make([]*logsQuery, 0)
@@ -128,122 +113,86 @@ func (e *CloudWatchExecutor) handleStartQuery(ctx context.Context, parameters *s
 	startQueryInput := &cloudwatchlogs.StartQueryInput{
 		StartTime:     aws.Int64(startTime.Unix()),
 		EndTime:       aws.Int64(endTime.Unix()),
-		Limit:         aws.Int64(query.Model.Get("limit").MustInt64(1000)),
-		LogGroupNames: aws.StringSlice(query.Model.Get("logGroupNames").MustStringArray()),
-		QueryString:   aws.String("fields @timestamp |" + query.Model.Get("queryString").MustString("")),
+		Limit:         aws.Int64(parameters.Get("limit").MustInt64(1000)),
+		LogGroupNames: aws.StringSlice(parameters.Get("logGroupNames").MustStringArray()),
+		QueryString:   aws.String("fields @timestamp | " + parameters.Get("queryString").MustString("")),
 	}
+	return e.logsClient.StartQuery(startQueryInput)
+}
 
-	// queryJSON, _ := json.Marshal(startQueryInput)
-	// logger.Info(string(queryJSON))
-
-	client, err := e.getLogsClient(region)
+func (e *CloudWatchExecutor) handleStartQuery(parameters *simplejson.Json, timeRange *tsdb.TimeRange, refID string) (*data.Frame, error) {
+	startQueryResponse, err := e.executeStartQuery(parameters, timeRange)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(err.(awserr.Error).Message())
 	}
 
-	startQueryResponse, err := client.StartQuery(startQueryInput)
-	if err != nil {
-		return nil, err
-	}
-
-	dataFrame := dataframe.New("queryID", dataframe.NewField("queryId", nil, []string{*startQueryResponse.QueryId}))
-	dataFrame.Name = query.RefId
-	dataFrame.RefID = query.RefId
+	dataFrame := data.NewFrame(refID, data.NewField("queryId", nil, []string{*startQueryResponse.QueryId}))
+	dataFrame.RefID = refID
 
 	return dataFrame, nil
 }
 
-func (e *CloudWatchExecutor) handleStopQuery(ctx context.Context, parameters *simplejson.Json, queryContext *tsdb.TsdbQuery, query *tsdb.Query) (*dataframe.Frame, error) {
-	region, _ := query.Model.Get("region").String()
-
+func (e *CloudWatchExecutor) executeStopQuery(parameters *simplejson.Json) (*cloudwatchlogs.StopQueryOutput, error) {
 	queryInput := &cloudwatchlogs.StopQueryInput{
-		QueryId: aws.String(query.Model.Get("queryId").MustString()),
+		QueryId: aws.String(parameters.Get("queryId").MustString()),
 	}
 
-	// logger := log.New("CloudWatchLogs")
-	// queryInputJSON, _ := json.Marshal(queryInput)
-	// logger.Info(string(queryInputJSON))
-
-	client, err := e.getLogsClient(region)
-	if err != nil {
-		return nil, err
-	}
-
-	response, err := client.StopQuery(queryInput)
+	response, err := e.logsClient.StopQuery(queryInput)
 	if err != nil {
 		awsErr, _ := err.(awserr.Error)
 		if awsErr.Code() == "InvalidParameterException" {
 			response = &cloudwatchlogs.StopQueryOutput{Success: aws.Bool(false)}
 			err = nil
 		} else {
-			return nil, err
+			err = fmt.Errorf(err.(awserr.Error).Message())
 		}
 	}
 
-	// responseJSON, _ := json.Marshal(response)
-	// logger.Info(string(responseJSON))
+	return response, err
+}
 
-	dataFrame := dataframe.New("StopQueryResponse", dataframe.NewField("success", nil, []bool{*response.Success}))
+func (e *CloudWatchExecutor) handleStopQuery(parameters *simplejson.Json) (*data.Frame, error) {
+	response, err := e.executeStopQuery(parameters)
+
+	if err != nil {
+		return nil, fmt.Errorf(err.(awserr.Error).Message())
+	}
+
+	dataFrame := data.NewFrame("StopQueryResponse", data.NewField("success", nil, []bool{*response.Success}))
 	return dataFrame, nil
 }
 
-func (e *CloudWatchExecutor) handleGetQueryResults(ctx context.Context, parameters *simplejson.Json, query *tsdb.Query) (*dataframe.Frame, error) {
-	region, _ := query.Model.Get("region").String()
-
+func (e *CloudWatchExecutor) executeGetQueryResults(parameters *simplejson.Json) (*cloudwatchlogs.GetQueryResultsOutput, error) {
 	queryInput := &cloudwatchlogs.GetQueryResultsInput{
-		QueryId: aws.String(query.Model.Get("queryId").MustString()),
+		QueryId: aws.String(parameters.Get("queryId").MustString()),
 	}
 
-	// logger := log.New("CloudWatchLogs")
-	// queryInputJSON, _ := json.Marshal(queryInput)
-	// logger.Info(string(queryInputJSON))
+	return e.logsClient.GetQueryResults(queryInput)
+}
 
-	client, err := e.getLogsClient(region)
+func (e *CloudWatchExecutor) handleGetQueryResults(parameters *simplejson.Json, refID string) (*data.Frame, error) {
+	getQueryResultsOutput, err := e.executeGetQueryResults(parameters)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(err.(awserr.Error).Message())
 	}
 
-	getQueryResultsOutput, err := client.GetQueryResults(queryInput)
-	if err != nil {
-		return nil, err
-	}
-
-	//outputJSON, _ := json.Marshal(getQueryResultsOutput)
-	//logger := log.New("CloudWatch")
-	//logger.Info(string(outputJSON))
-
-	dataFrame, err := logsResultsToDataframes(getQueryResultsOutput)
-	dataFrame.Name = query.RefId
-	dataFrame.RefID = query.RefId
-
-	if err != nil {
-		return nil, err
-	}
+	dataFrame := logsResultsToDataframes(getQueryResultsOutput)
+	dataFrame.Name = refID
+	dataFrame.RefID = refID
 
 	return dataFrame, nil
 }
 
-func (e *CloudWatchExecutor) handleGetLogGroupFields(ctx context.Context, parameters *simplejson.Json, query *tsdb.Query) (*dataframe.Frame, error) {
-	region, _ := query.Model.Get("region").String()
-
+func (e *CloudWatchExecutor) handleGetLogGroupFields(parameters *simplejson.Json, refID string) (*data.Frame, error) {
 	queryInput := &cloudwatchlogs.GetLogGroupFieldsInput{
-		LogGroupName: aws.String(query.Model.Get("logGroupName").MustString()),
-		Time:         aws.Int64(query.Model.Get("time").MustInt64()),
+		LogGroupName: aws.String(parameters.Get("logGroupName").MustString()),
+		Time:         aws.Int64(parameters.Get("time").MustInt64()),
 	}
 
-	client, err := e.getLogsClient(region)
+	getLogGroupFieldsOutput, err := e.logsClient.GetLogGroupFields(queryInput)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(err.(awserr.Error).Message())
 	}
-
-	getLogGroupFieldsOutput, err := client.GetLogGroupFields(queryInput)
-	if err != nil {
-		return nil, err
-	}
-
-	// logger := log.New("CloudWatch")
-	// getLogGroupFieldsOutputJSON, _ := json.Marshal(getLogGroupFieldsOutput)
-	// logger.Info(string(getLogGroupFieldsOutputJSON))
 
 	fieldNames := make([]*string, 0)
 	fieldPercentages := make([]*int64, 0)
@@ -253,13 +202,13 @@ func (e *CloudWatchExecutor) handleGetLogGroupFields(ctx context.Context, parame
 		fieldPercentages = append(fieldPercentages, logGroupField.Percent)
 	}
 
-	dataFrame := dataframe.New(
-		"GetLogGroupFieldsOutput",
-		dataframe.NewField("name", nil, fieldNames),
-		dataframe.NewField("percent", nil, fieldPercentages),
+	dataFrame := data.NewFrame(
+		refID,
+		data.NewField("name", nil, fieldNames),
+		data.NewField("percent", nil, fieldPercentages),
 	)
-	dataFrame.Name = query.RefId
-	dataFrame.RefID = query.RefId
+
+	dataFrame.RefID = refID
 
 	return dataFrame, nil
 }

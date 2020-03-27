@@ -2,10 +2,10 @@ package cloudwatch
 
 import (
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
-	"github.com/grafana/grafana-plugin-sdk-go/dataframe"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 )
 
-func logsResultsToDataframes(response *cloudwatchlogs.GetQueryResultsOutput) (*dataframe.Frame, error) {
+func logsResultsToDataframes(response *cloudwatchlogs.GetQueryResultsOutput) *data.Frame {
 	rowCount := len(response.Results)
 	fieldValues := make(map[string][]*string)
 	for i, row := range response.Results {
@@ -23,21 +23,22 @@ func logsResultsToDataframes(response *cloudwatchlogs.GetQueryResultsOutput) (*d
 		}
 	}
 
-	newFields := make([]*dataframe.Field, 0)
+	newFields := make([]*data.Field, 0)
 	for fieldName, vals := range fieldValues {
-		newFields = append(newFields, dataframe.NewField(fieldName, nil, vals))
+		newFields = append(newFields, data.NewField(fieldName, nil, vals))
 
 		if fieldName == "@timestamp" {
-			newFields[len(newFields)-1].SetConfig(&dataframe.FieldConfig{Title: "Time"})
+			newFields[len(newFields)-1].SetConfig(&data.FieldConfig{Title: "Time"})
 		}
 	}
 
-	frame := dataframe.New("CloudWatchLogsResponse", newFields...)
-	frame.Meta = &dataframe.QueryResultMeta{
+	frame := data.NewFrame("CloudWatchLogsResponse", newFields...)
+	frame.Meta = &data.QueryResultMeta{
 		Custom: map[string]interface{}{
 			"Status":     *response.Status,
 			"Statistics": *response.Statistics,
 		},
 	}
-	return frame, nil
+
+	return frame
 }

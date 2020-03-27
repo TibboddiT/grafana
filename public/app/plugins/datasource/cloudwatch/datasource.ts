@@ -38,7 +38,8 @@ import {
   LogAction,
 } from './types';
 import { from, empty, Observable } from 'rxjs';
-import { delay, expand, map, mergeMap, tap, finalize } from 'rxjs/operators';
+import { delay, expand, map, mergeMap, tap, finalize, catchError } from 'rxjs/operators';
+import { CloudWatchLanguageProvider } from './language_provider';
 
 const TSDB_QUERY_ENDPOINT = '/api/tsdb/query';
 import { VariableWithMultiSupport } from 'app/features/templating/types';
@@ -69,6 +70,7 @@ export class CloudWatchDatasource extends DataSourceApi<CloudWatchQuery, CloudWa
   debouncedAlert: (datasourceName: string, region: string) => void;
   debouncedCustomAlert: (title: string, message: string) => void;
   logQueries: Set<string>;
+  languageProvider: CloudWatchLanguageProvider;
 
   /** @ngInject */
   constructor(
@@ -85,6 +87,8 @@ export class CloudWatchDatasource extends DataSourceApi<CloudWatchQuery, CloudWa
     this.debouncedAlert = memoizedDebounce(displayAlert, AppNotificationTimeout.Error);
     this.debouncedCustomAlert = memoizedDebounce(displayCustomError, AppNotificationTimeout.Error);
     this.logQueries = new Set<string>();
+
+    this.languageProvider = new CloudWatchLanguageProvider(this);
   }
 
   query(options: DataQueryRequest<CloudWatchQuery>) {
@@ -92,7 +96,7 @@ export class CloudWatchDatasource extends DataSourceApi<CloudWatchQuery, CloudWa
 
     const firstTarget = options.targets[0];
 
-    if (firstTarget.type === 'Logs') {
+    if (firstTarget.mode === 'Logs') {
       const queryParams = options.targets.map((target: CloudWatchLogsQuery) => ({
         queryString: target.expression,
         refId: target.refId,
@@ -114,7 +118,7 @@ export class CloudWatchDatasource extends DataSourceApi<CloudWatchQuery, CloudWa
       .filter(
         item =>
           (item.id !== '' || item.hide !== true) &&
-          item.type === 'Metrics' &&
+          item.mode !== 'Logs' &&
           ((!!item.region && !!item.namespace && !!item.metricName && !_.isEmpty(item.statistics)) ||
             item.expression?.length > 0)
       )
@@ -229,6 +233,58 @@ export class CloudWatchDatasource extends DataSourceApi<CloudWatchQuery, CloudWa
 
     return getLogGroupFieldsResponse;
   }
+
+  // getLogRowContext(row: LogRowModel, options?: any): Promise<{ data: DataFrame[] }> {
+  //   row.
+  //   const target = this.prepareLogRowContextQueryTarget(
+  //     row,
+  //     (options && options.limit) || 10,
+  //     (options && options.direction) || 'BACKWARD'
+  //   );
+
+  //   const reverse = options && options.direction === 'FORWARD';
+  //   return this._request(RANGE_QUERY_ENDPOINT, target)
+  //     .pipe(
+  //       catchError((err: any) => {
+  //         if (err.status === 404) {
+  //           return of(err);
+  //         }
+
+  //         const error: DataQueryError = {
+  //           message: 'Error during context query. Please check JS console logs.',
+  //           status: err.status,
+  //           statusText: err.statusText,
+  //         };
+  //         throw error;
+  //       }),
+  //       switchMap((res: { data: LokiStreamResponse; status: number }) =>
+  //         iif(
+  //           () => res.status === 404,
+  //           defer(() =>
+  //             this._request(LEGACY_QUERY_ENDPOINT, target).pipe(
+  //               catchError((err: any) => {
+  //                 const error: DataQueryError = {
+  //                   message: 'Error during context query. Please check JS console logs.',
+  //                   status: err.status,
+  //                   statusText: err.statusText,
+  //                 };
+  //                 throw error;
+  //               }),
+  //               map((res: { data: LokiLegacyStreamResponse }) => ({
+  //                 data: res.data ? res.data.streams.map(stream => legacyLogStreamToDataFrame(stream, reverse)) : [],
+  //               }))
+  //             )
+  //           ),
+  //           defer(() =>
+  //             of({
+  //               data: res.data ? res.data.data.result.map(stream => lokiStreamResultToDataFrame(stream, reverse)) : [],
+  //             })
+  //           )
+  //         )
+  //       )
+  //     )
+  //     .toPromise();
+  // }
 
   get variables() {
     return this.templateSrv.getVariables().map(v => `$${v.name}`);
@@ -420,7 +476,16 @@ export class CloudWatchDatasource extends DataSourceApi<CloudWatchQuery, CloudWa
           ...param,
         })),
       })
-    ).pipe(map(response => resultsToDataFrames(response)));
+    ).pipe(
+      map(response => resultsToDataFrames(response)),
+      catchError(err => {
+        if (err.data?.error) {
+          throw err.data.error;
+        }
+
+        throw err;
+      })
+    );
   }
 
   getRegions() {
@@ -650,6 +715,7 @@ export class CloudWatchDatasource extends DataSourceApi<CloudWatchQuery, CloudWa
     };
 
     const result = await getBackendSrv().datasourceRequest(options);
+
     return result.data;
   }
 

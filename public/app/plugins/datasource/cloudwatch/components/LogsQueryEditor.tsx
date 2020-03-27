@@ -6,8 +6,18 @@ import { AbsoluteTimeRange, QueryEditorProps } from '@grafana/data';
 import { CloudWatchDatasource } from '../datasource';
 import { CloudWatchLogsQuery, CloudWatchQuery } from '../types';
 import { CloudWatchLogsQueryField } from './LogsQueryField';
+import { useCloudWatchSyntax } from '../useCloudwatchSyntax';
+import { CloudWatchLanguageProvider } from '../language_provider';
+import { FormLabel } from '@grafana/ui';
+import CloudWatchLink from './CloudWatchLink';
+import { css } from 'emotion';
 
 type Props = QueryEditorProps<CloudWatchDatasource, CloudWatchQuery>;
+
+const labelClass = css`
+  margin-left: 3px;
+  flex-grow: 0;
+`;
 
 export const CloudWatchLogsQueryEditor = memo(function CloudWatchLogsQueryEditor(props: Props) {
   const { query, data, datasource, onChange, onRunQuery } = props;
@@ -26,15 +36,27 @@ export const CloudWatchLogsQueryEditor = memo(function CloudWatchLogsQueryEditor
     };
   }
 
+  const { isSyntaxReady, syntax } = useCloudWatchSyntax(
+    datasource.languageProvider as CloudWatchLanguageProvider,
+    absolute
+  );
+
   return (
     <CloudWatchLogsQueryField
       datasource={datasource}
       query={query}
-      onChange={(val: CloudWatchLogsQuery) => onChange({ ...val, type: 'Logs' })}
+      onChange={(val: CloudWatchLogsQuery) => onChange({ ...val, mode: 'Logs' })}
       onRunQuery={onRunQuery}
       history={[]}
       data={data}
       absoluteRange={absolute}
+      syntaxLoaded={isSyntaxReady}
+      syntax={syntax}
+      ExtraFieldElement={
+        <FormLabel className={`gf-form-label--btn ${labelClass}`} width="auto" tooltip="Link to Graph in AWS">
+          <CloudWatchLink query={query as CloudWatchLogsQuery} panelData={data} datasource={datasource} />
+        </FormLabel>
+      }
     />
   );
 });
